@@ -1,0 +1,116 @@
+<?php
+function harvester_install() {
+  include_once('includes.php');
+   // define the node type
+  $info = array(
+    'type' => 'cg_object',
+    'name' => 'Culture Grid Object',
+    'base' => 'node_content',
+    'title_label' => 'Object Name',
+    'description' => 'This is the content type for the harvested Culture Grid Objects. Content of this type is not created manually but can be edited to add more information and tags',
+    'custom' => TRUE,
+  );
+  
+  
+  // set other node defaults not declared above
+  $content_type = node_type_set_defaults($info);
+  
+  // save the content type
+  node_type_save($content_type);
+  
+  // create all the fields we are adding to our content type
+  foreach (_get_installed_fields() as $field) {
+    field_create_field($field);
+  }
+  
+  // create all the instances for our fields
+  foreach (_get_installed_instances() as $instance) {
+    $instance['entity_type'] = 'node';
+    $instance['bundle'] = $info['type'];
+    field_create_instance($instance);
+  }
+}
+
+function harvester_schema() {
+  $schema['mgl_oai_report'] = array(
+    'description' => 'Stores example settings for nodes.',
+    'fields' => array(
+      'nid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'publisher' => array(
+        'type' => 'text',
+      ),
+      'title' => array(
+        'type' => 'text',
+      ),
+      'old_title' => array(
+        'type' => 'text',
+      ),
+      'new_title' => array(
+        'type' => 'text',
+      ),
+      'old_desc' => array(
+        'type' => 'text',
+      ),
+      'new_desc' => array(
+        'type' => 'text',
+      ),
+      'old_copy' => array(
+        'type' => 'text',
+      ),
+      'new_copy' => array(
+        'type' => 'text',
+      ),
+      'old_maker' => array(
+        'type' => 'text',
+      ),
+      'new_maker' => array(
+        'type' => 'text',
+      ),
+      'old_id' => array(
+        'type' => 'text',
+      ),
+      'new_id' => array(
+        'type' => 'text',
+      ),
+      'old_date' => array(
+        'type' => 'text',
+      ),
+      'new_date' => array(
+        'type' => 'text',
+      ),
+      'old_pub' => array(
+        'type' => 'text',
+      ),
+      'new_pub' => array(
+        'type' => 'text',
+      ),
+      'old_mat' => array(
+        'type' => 'text',
+      ),
+      'new_mat' => array(
+        'type' => 'text',
+      ),
+      'old_size' => array(
+        'type' => 'text',
+      ),
+      'new_size' => array(
+        'type' => 'text',
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+      ),
+      'status' => array(
+        'type' => 'text',
+      ),
+      'date' => array(
+        'type' => 'text',
+      ),
+    ),
+
+  );
+  return $schema;
+}

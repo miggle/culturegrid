@@ -1,0 +1,1022 @@
+<?php
+
+function harvester_perm() {
+    return array('access harvester');
+}
+
+/**
+ * Set up menu callbacks for each marketing url
+ */
+function harvester_menu() {
+    $items = array();
+
+    // Run harvest()
+    $items['harvest'] = array(
+        'title' => t('Harvest'),
+        'access callback' => TRUE,
+        'page callback' => 'harvest',
+        'type' => MENU_CALLBACK
+    );
+
+    $items['admin/reports/harvester-report/%/%'] = array(
+        'title' => 'Harvester Report',
+        'access callback' => TRUE,
+        'page callback' => 'harvester_report',
+        'type' => MENU_CALLBACK
+    );
+
+    $items['admin/reports/harvester'] = array(
+        'title' => 'Harvester Report',
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('harvester_report_form'),
+        'access callback' => TRUE,
+        'type' => MENU_NORMAL_ITEM,
+    );
+
+    $items['admin/config/content/harvester'] = array(
+        'title' => 'Harvester Settings',
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('harvester_settings_form'),
+        'access arguments' => array('access harvester'),
+        'type' => MENU_NORMAL_ITEM,
+    );
+
+    // Test page
+    $items['htest'] = array(
+        'title' => t('Harvest'),
+        'access callback' => TRUE,
+        'page callback' => 'harvester_test',
+        'type' => MENU_CALLBACK
+    );
+
+    return $items;
+}
+
+function harvester_test() {
+  echo 'test';
+
+
+  /*
+  $url = "http://www.culturegrid.org.uk/dpp/oai?verb=listSets";
+
+  $xml = simplexml_load_file($url);
+
+  foreach($xml->ListSets->set as $set) {
+    $sets[] = (string)$set->setSpec;
+  }
+
+  p($sets);
+   *
+   */
+}
+
+function harvester_settings_form($form, &$form_state) {
+  $form['report_emails'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Email addresses to send report to (separated by commas)'),
+    '#default_value' => variable_get('cg_report_emails', ''),
+  );
+
+  $form['cron_interval'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Interval in minutes between each Culture Grid data pull'),
+    '#default_value' => variable_get('cg_cron_interval', ''),
+  );
+
+  // Select lists
+  $url = "http://www.culturegrid.org.uk/dpp/oai?verb=listSets";
+
+  $xml = simplexml_load_file($url);
+
+  foreach($xml->ListSets->set as $set) {
+    $set_specs[] = (string)$set->setSpec;
+    $set_names[] = (string)$set->setName;
+  }
+
+  $cg_selected_sets = variable_get('cg_selected_sets', array());
+
+  $cg_selected_set_specs = variable_get('cg_selected_set_specs', array());
+
+  $selected_keys = array();
+  foreach ($cg_selected_set_specs as $cg_selected_set_spec) {
+    $key = array_search($cg_selected_set_spec, $set_specs);
+    if ($key !== FALSE) {
+      $selected_keys[] = $key;
+    }
+  }
+
+  $form['sets'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Sets'),
+    '#options' => $set_names,
+    '#default_value' => $selected_keys,
+  );
+
+  $form['hidden'] = array('#type' => 'value', '#value' => $set_specs);
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save'),
+  );
+  return $form;
+}
+
+function harvester_settings_form_submit($form, &$form_state) {
+  variable_set('cg_report_emails', $form_state['values']['report_emails']);
+  variable_set('cg_cron_interval', $form_state['values']['cron_interval']);
+  // Setspecs
+  $set_specs = $form_state['values']['hidden'];
+
+  $selected_sets = $form_state['values']['sets'];
+  $selected_indices = array();
+  for ($i = 0; $i < count($selected_sets); $i++) {
+    // Check which checkboxes have been selected
+    if (is_string($selected_sets[$i])) {
+      $selected_indices[] = $i;
+    }
+  }
+
+  $selected_set_specs = array();
+  foreach ($selected_indices as $selected_index) {
+    $selected_set_specs[] = $set_specs[$selected_index];
+  }
+
+  variable_set('cg_selected_set_specs', $selected_set_specs);
+}
+
+
+function harvester_init() {
+  drupal_add_css('/sites/all/modules/miggle/harvester/harvester.css',array('type' => 'external'));
+}
+
+function harvester_report_form($form_state) {
+
+  //harvester_sendmail('timrabbetts@gmail.com','Harvester Ran Successfully','body','Museum of London');
+  $form['last_run'] = array('#markup' => harvester_last_run());
+
+  $form['from_date'] = array(
+    '#type' => 'date_popup',
+    '#date_format' => 'Y-M-d',
+    '#title' => t('Start date')
+  );
+
+  $form['to_date'] = array(
+    '#type' => 'date_popup',
+    '#date_format' => 'Y-M-d',
+    '#title' => t('End date')
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Generate report'),
+    '#submit' => array('harvester_report_form_save'),
+  );
+
+  return $form;
+}
+
+function harvester_report_form_save($form, &$form_state) {
+  drupal_goto('/admin/reports/harvester-report/'.$form_state['values']['from_date'].'/'.$form_state['values']['to_date']);
+}
+
+function harvester_last_run() {
+  ob_start();
+  print '<h1>harvester last run report</h1>';
+  print '<p>click a date to see the harvest report, or select dates below</p>';
+
+  $sql = "select date
+               from mgl_oai_report
+               group by date";
+  $dates = db_query($sql)->fetchAll();
+
+  print '<table><tr><th>Date</th></tr>';
+  foreach($dates as $date) {
+
+    $start = date('Y-m-d',strtotime($date->date . ' -1 day'));
+    $end = date('Y-m-d',strtotime($date->date . ' +1 day'));
+
+    print "<tr><td><a href='/admin/reports/harvester-report/$start/$end'>{$date->date}</a></td></tr>";
+  }
+  print '</table>';
+
+  print '<br /><h1>or choose custom date range</h1>';
+
+  return ob_get_clean();
+}
+
+function harvester_report() {
+  ob_start();
+
+  $from_date = arg(3);
+  $to_date = arg(4);
+  $start = arg(5);
+  if( empty($start) ) {
+    $start = 0;
+  }
+  $length = 100;
+
+  $from_stamp = date('U',strtotime($from_date));
+  $to_stamp = date('U',strtotime($to_date));
+
+  $sql = "   select *
+                  from mgl_oai_report
+                  where timestamp > $from_stamp and timestamp < $to_stamp
+                  limit $start,$length";
+
+  $data = db_query($sql)->fetchAll();
+
+  $sql_c = "select count(*)
+                  from mgl_oai_report
+                  where timestamp > $from_stamp and timestamp < $to_stamp";
+  $num_rows = db_query($sql_c)->fetchfield(0);
+  $end = $start + $length;
+  if( $end > $num_rows) {
+    $end = $num_rows;
+  }
+  print "<h2>Showing nodes $start to $end of $num_rows</h2>";
+
+  if( $start != 0 ) {
+    $prev = $start - $length;
+    print "<a href='/admin/reports/harvester-report/$from_date/$to_date/$prev'><< prev</a> | ";
+  }
+
+  if( ($start + $length) < $num_rows ) {
+    $next = $start + $length;
+    print "<a href='/admin/reports/harvester-report/$from_date/$to_date/$next'>next >></a>";
+  }
+
+  create_sticky_header();
+
+  print '<table id="h-rep" class="h-rep sticky-enabled tableheader-processed sticky-table">';
+  ?>
+  <tr>
+    <th>nid</th>
+    <th>pub</th>
+    <th>title</th>
+    <th>old_title</th>
+    <th class="high">new_title</th>
+    <th>old_desc</th>
+    <th class="high">new_desc</th>
+    <th>old_copy</th>
+    <th class="high">new_copy</th>
+    <th>old_maker</th>
+    <th class="high">new_maker</th>
+    <th>old_id</th>
+    <th class="high">new_id</th>
+    <th>old_date</th>
+    <th class="high">new_date</th>
+    <th>old_pub</th>
+    <th class="high">new_pub</th>
+    <th>old_mat</th>
+    <th class="high">new_mat</th>
+    <th>old_size</th>
+    <th class="high">new_size</th>
+    <th>status</th>
+    <th>date</th>
+  </tr>
+    <?php
+
+  foreach($data as $row) {
+    print '<tr>';
+    print '<td><a target="_blank" href="/node/'.$row->nid.'">'.$row->nid.'</a></td>';
+    print '<td>'.ttrim($row->publisher).'</td>';
+    print '<td>'.ttrim($row->title).'</td>';
+    print '<td>'.ttrim($row->old_title).'</td>';
+    print '<td class="high">'.ttrim($row->new_title).'</td>';
+    print '<td>'.ttrim($row->old_desc).'</td>';
+    print '<td class="high">'.ttrim($row->new_desc).'</td>';
+    print '<td>'.ttrim($row->old_copy).'</td>';
+    print '<td class="high">'.ttrim($row->new_copy).'</td>';
+    print '<td>'.ttrim($row->old_maker).'</td>';
+    print '<td class="high">'.ttrim($row->new_maker).'</td>';
+    print '<td>'.ttrim($row->old_id).'</td>';
+    print '<td class="high">'.ttrim($row->new_id).'</td>';
+    print '<td>'.ttrim($row->old_date).'</td>';
+    print '<td class="high">'.ttrim($row->new_date).'</td>';
+    print '<td>'.ttrim($row->old_pub).'</td>';
+    print '<td class="high">'.ttrim($row->new_pub).'</td>';
+    print '<td>'.ttrim($row->old_mat).'</td>';
+    print '<td class="high">'.ttrim($row->new_mat).'</td>';
+    print '<td>'.ttrim($row->old_size).'</td>';
+    print '<td class="high">'.ttrim($row->new_size).'</td>';
+    print '<td>'.ttrim($row->status).'</td>';
+    print '<td>'.ttrim($row->date).'</td>';
+    print '</tr>';
+  }
+
+  print '</table>';
+
+  return ob_get_clean();
+}
+
+function create_sticky_header() {
+  ?>
+  <table id="h-rep-sh"class="sticky-header" style="position: fixed; width: 1000px; bottom: -10px; left: 68px;">
+    <thead>
+      <tr>
+        <th>nid</th>
+        <th>pub</th>
+        <th>title</th>
+        <th>old_title</th>
+        <th class="high">new_title</th>
+        <th>old_desc</th>
+        <th class="high">new_desc</th>
+        <th>old_copy</th>
+        <th class="high">new_copy</th>
+        <th>old_maker</th>
+        <th class="high">new_maker</th>
+        <th>old_id</th>
+        <th class="high">new_id</th>
+        <th>old_date</th>
+        <th class="high">new_date</th>
+        <th>old_pub</th>
+        <th class="high">new_pub</th>
+        <th>old_mat</th>
+        <th class="high">new_mat</th>
+        <th>old_size</th>
+        <th class="high">new_size</th>
+        <th>status</th>
+        <th>date</th>
+    </tr>
+    </thead>
+  </table>
+  <?php
+}
+
+function ttrim($str) {
+  $str = htmlentities($str,ENT_QUOTES);
+  return "<a title='$str'>" . trim(substr($str,0,6)) . "</a>";
+}
+
+function harvester_cron() {
+  // Run harvester if it has been long enough since last run
+  if ((time() - variable_get('cg_last_run', 0)) > variable_get('cg_cron_interval', 0)*60) {
+    harvest();
+    variable_set('cg_last_run', time());
+  }
+}
+
+function cg_find_record($data,$id) {
+
+  foreach($data['OAI-PMH']['ListRecords']['record'] as $record) {
+
+    if( strstr(strtolower($record['metadata']['pndsdc:description']['dc:identifier']),strtolower($id)) ||
+         strstr(strtolower($record['metadata']['description']['dc:identifier']),strtolower($id)) ) {
+      return $record;
+    }
+  }
+  die;
+  return false;
+
+}
+
+function cg_get_record($set,$id) {
+
+    ob_start();
+
+    $url = "http://www.culturegrid.org.uk/dpp/oai?verb=listRecords&metadataPrefix=pnds_dcap_raw&set={$set}";
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+    $xml = curl_exec($ch);
+
+    $data = xml2array($xml);
+
+    $rec = cg_find_record($data,$id);
+    if( !empty($rec) ) {
+      return '<pre>' . print_r($rec,true) . '</pre>';
+    }
+
+    $new_records = format_records($set['setSpec'],$data['OAI-PMH']['ListRecords']['record']);
+    if( empty($records) ) {
+      $records = $new_records;
+    } else {
+      $records = array_merge_recursive($new_records, $records);
+    }
+
+
+    while(isset($data['OAI-PMH']['ListRecords']['resumptionToken']) ) {
+        $token = $data['OAI-PMH']['ListRecords']['resumptionToken'];
+
+        $url = "http://www.culturegrid.org.uk/dpp/oai?verb=listRecords&resumptionToken={$token}";
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+        $xml = curl_exec($ch);
+
+        $data = xml2array($xml);
+
+        $more_records = format_records($set['setSpec'],
+                                       $data['OAI-PMH']['ListRecords']['record']);
+
+        if( run_from_cli() ) {
+          print "\n(m){$set['setSpec']}[".ccli(count($new_records),'yellow').']';
+        }
+
+        $records = array_merge_recursive($records, $more_records);
+
+        $token = $data['OAI-PMH']['ListRecords']['resumptionToken'];
+
+    }
+
+    print count($records);
+
+ }
+
+function harvester_cg_get() {
+  ob_start();
+
+  $set = arg(1);
+  if( !empty($set) ) {
+    //show the enter id
+    if( !empty($_GET['id']) ) {
+      return cg_get_record($set,$_GET['id']);
+    }
+    ?>
+    <h2><?php print arg(1); ?></h2>
+    <form name="input" action="/harvest-get/<?php print $set; ?>" method="get">
+      Enter the id for the item you want to get from culture grid:
+      <input type="text" name="id" />
+      <input type="submit" value="Get record from culture grid" />
+    </form>
+    <?php
+    return ob_get_clean();
+  }
+
+  $id_no = 'MoL_HG2966/24';
+  $prov_by = 'Museum of London';
+
+  $url = "http://www.culturegrid.org.uk/dpp/oai?verb=listSets";
+  $xml = simplexml_load_file($url);
+
+  foreach($xml->ListSets->set as $mus) {
+    if( strstr($mus->setSpec,'PN:e20cl') ) {
+      print "<a href='/harvest-get/{$mus->setSpec}'>$mus->setName</a><br />";
+    }
+  }
+
+  return ob_get_clean();
+
+}
+
+function harvest($force_set = '') {
+  $limit = 10;
+
+  require_once('cli_colors.class.php');
+
+  //$force_set = 'PN:e20cl:Bishopsgate';
+  //$force_set = 'PN:e20cl:MOL';
+  //$force_set = 'PN:Bowes:*';
+  $disable_multiples = false;
+  $show_cg_totals = false;
+
+  $start = date('U');
+
+  //get the sets
+  $url = "http://www.culturegrid.org.uk/dpp/oai?verb=listSets";
+  //error_reporting(-1);
+  ini_set('display_errors','on');
+
+  $xml = simplexml_load_file($url);
+  if( empty($xml) ) {
+    drupal_set_message('we cannot get the xml from culture grid as there is a problem');
+
+  }
+
+  $x = 0;
+  $cg_selected_set_specs = variable_get('cg_selected_set_specs', array());
+
+
+  foreach($xml->ListSets->set as $set) {
+
+    if( in_array($set->setSpec, $cg_selected_set_specs)) {
+      $sets[] = (array)$set;
+    }
+  }
+
+  //allow us to pick one set to focus on
+  if( !empty($force_set) ) {
+    $sets = array( array('setSpec' => $force_set ) );
+  }
+
+  //now loop through all sets and get the records
+  foreach($sets as $set) {
+
+    $url = "http://www.culturegrid.org.uk/dpp/oai?verb=listRecords&metadataPrefix=pnds_dcap_raw&set={$set['setSpec']}";
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+    $xml = curl_exec($ch);
+
+    $data = xml2array($xml);
+
+    $new_records = format_records($set['setSpec'],$data['OAI-PMH']['ListRecords']['record']);
+    if( empty($records) ) {
+      $records = $new_records;
+    } else {
+      $records = array_merge_recursive($new_records, $records);
+    }
+
+    print "\n\n(n){$set['setSpec']}[".ccli(count($new_records),'green').']';
+
+    //resumption token indicates incomplete list, so loop and get all
+    if( isset($data['OAI-PMH']['ListRecords']['resumptionToken']) ) {
+      $token = $data['OAI-PMH']['ListRecords']['resumptionToken'];
+    } else {
+      $token = '';
+    }
+
+    if( !empty($token) && empty($disable_multiples) ) {
+
+      while( !empty($token) ) {
+        $url = "http://www.culturegrid.org.uk/dpp/oai?verb=listRecords&resumptionToken={$token}";
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+        $xml = curl_exec($ch);
+
+        $data = xml2array($xml);
+
+        $more_records = format_records($set['setSpec'],
+                                       $data['OAI-PMH']['ListRecords']['record']);
+
+
+        $records = array_merge_recursive($records, $more_records);
+
+        $token = $data['OAI-PMH']['ListRecords']['resumptionToken'];
+      } //token repeat while loop
+
+    } //if token exists
+
+  } //sets loop
+
+  $rtt = date('U') - $start;
+
+  if( $show_cg_totals ) {
+    debug_totals($records);
+    print '<br />Time taken:'.$rtt.'secs';
+    die;
+  }
+
+  $c = 0;
+  $links = '';
+  $output = '';
+  $added = 0;
+  $updated = 0;
+  $equal = 0;
+
+  print "\n totals records to process : ".ccli(count($records),'red');
+
+  //now we need to add these objects to drupal
+  foreach($records as $record) {
+      print '.['.$c.']';
+      if( $record['set'] != $current_set ) {
+        $current_set = $record['set'];
+        print "\n\nmuseum: ".ccli($record['set'],'light_blue')."\n\n";
+      }
+
+      // Obtain link
+      $record['data']['link'] = empty($record['data']['dc:identifier']) ? '' : utf8_encode($record['data']['dc:identifier']);
+
+      //strip out the id
+      $record['data']['dc:identifier'] = str_replace('http://www.20thcenturylondon.org.uk/rserver.php?identifier=','',$record['data']['dc:identifier']);
+
+      //find node with this id if exists then update this nodes fieldds
+      $sql = "select n.nid, n.type
+            from field_data_field_object_id i
+            inner join node n on (n.nid = i.entity_id)
+            where field_object_id_value =  '" . mysql_escape_string($record['data']['dc:identifier'])."'";
+      $data = db_query($sql)->fetchAssoc('nid');
+      $found_nid = null;
+      $found_nid = $data['nid'];
+
+      $insert = false;
+      $update = false;
+
+      if( !empty($found_nid) ) {
+        //get the node and update it
+        $update = true;
+        $node = node_load($found_nid);
+      } else {
+        // Construct the new node object.
+        $node = new stdClass();
+        $insert = true;
+      }
+
+      $node->type = 'cg_object';
+      $node->created = time();
+      $node->changed = $node->created;
+      $node->status = 1;           // Published?
+      $node->promote = 0;           // Display on front page?
+      $node->sticky = 0;          // Display top of page?
+      $node->format = 1;         // Filtered HTML?
+      $node->uid = 1;             //  Content owner uid (author)?
+      $node->language = 'en';
+
+      $record['data']['dc:title'] = utf8_encode($record['data']['dc:title']);
+      $record['data']['dc:description'] = empty($record['data']['dc:description']) ? '' : utf8_encode($record['data']['dc:description']);
+      $record['data']['dcterms:rightsHolder'] = empty($record['data']['dcterms:rightsHolder']) ? '' : utf8_encode($record['data']['dcterms:rightsHolder']);
+      $record['data']['dc:creator'] = empty($record['data']['dc:creator']) ? '' : utf8_encode($record['data']['dc:creator']);
+      $record['data']['dc:identifier'] = empty($record['data']['dc:identifier']) ? '' : utf8_encode($record['data']['dc:identifier']);
+      $record['data']['dcterms:temporal'] = empty($record['data']['dcterms:temporal']) ? '' : utf8_encode($record['data']['dcterms:temporal']);
+      $record['data']['dc:publisher'] = empty($record['data']['dc:publisher']) ? '' : utf8_encode($record['data']['dc:publisher']);
+      $record['data']['dc:publisher'] = empty($record['data']['dc:publisher']) ? '' : utf8_encode($record['data']['dc:publisher']);
+      $record['data']['pndsterms:extension']['e20cl:materials'] = empty($record['data']['pndsterms:extension']['e20cl:materials']) ? '' : utf8_encode($record['data']['pndsterms:extension']['e20cl:materials']);
+      $record['data']['pndsterms:extension']['e20cl:size'] = empty($record['data']['pndsterms:extension']['e20cl:size']) ? '' : utf8_encode($record['data']['pndsterms:extension']['e20cl:size']);
+      $record['data']['pndsterms:thumbnail'] = empty($record['data']['pndsterms:thumbnail']) ? '' : utf8_encode($record['data']['pndsterms:thumbnail']);
+
+      if( !$found_nid ) {
+        $node->title = $record['data']['dc:title'];
+        $node->field_object_description['und'][0]['value'] = $record['data']['dc:description'];
+        $node->field_object_copyright_holder['und'][0]['value'] = $record['data']['dcterms:rightsHolder'];
+        $node->field_object_maker['und'][0]['value'] = $record['data']['dc:creator'];
+        $node->field_object_id['und'][0]['value'] = $record['data']['dc:identifier'];
+        $node->field_object_production_date['und'][0]['value'] = $record['data']['dcterms:temporal'];
+        $node->field_object_publisher_id['und'][0]['value'] = $record['data']['dc:publisher'];
+        $node->field_object_materials['und'][0]['value'] = $record['data']['pndsterms:extension']['e20cl:materials'];
+        $node->field_object_size['und'][0]['value'] = $record['data']['pndsterms:extension']['e20cl:size'];
+        $node->field_object_link['und'][0]['value'] = $record['data']['link'];
+        $node->field_object_thumbnail_url['und'][0]['value'] = $record['data']['pndsterms:thumbnail'];
+      } else {
+
+        $fields = array();
+
+        if( $node->title != $record['data']['dc:title'] ) {
+          $fields['f_title']['old'] = $node->title;
+          $node->title = $fields['f_title']['new'] = decode_entities(stripslashes($record['data']['dc:title']));
+        }
+
+        if( $node->field_object_description['und'][0]['value'] != $record['data']['dc:description'] ) {
+          $fields['f_desc']['old'] = $node->field_object_description['und'][0]['value'];
+          $node->field_object_description['und'][0]['value'] = $fields['f_desc']['new'] = decode_entities(stripslashes($record['data']['dc:description']));
+        }
+
+        if( $node->field_object_copyright_holder['und'][0]['value'] != $record['data']['dcterms:rightsHolder'] ) {
+          $fields['f_copy']['old'] = $node->field_object_copyright_holder['und'][0]['value'];
+          $node->field_object_copyright_holder['und'][0]['value'] = $fields['f_copy']['new'] = decode_entities(stripslashes($record['data']['dcterms:rightsHolder']));
+        }
+
+        if( $node->field_object_maker['und'][0]['value'] != $record['data']['dc:creator'] ) {
+          $fields['f_maker']['old'] = $node->field_object_maker['und'][0]['value'];
+          $node->field_object_maker['und'][0]['value'] = $fields['f_maker']['new'] = decode_entities(stripslashes($record['data']['dc:creator']));
+        }
+
+        if( $node->field_object_id['und'][0]['value'] != $record['data']['dc:identifier'] ) {
+          $fields['f_id']['old'] = $node->field_object_id['und'][0]['value'];
+          $node->field_object_id['und'][0]['value'] = $fields['f_id']['new'] = decode_entities(stripslashes($record['data']['dc:identifier']));
+        }
+
+        if( $node->field_object_production_date['und'][0]['value'] != $record['data']['dcterms:temporal'] ) {
+          $fields['f_date']['old'] = $node->field_object_production_date['und'][0]['value'];
+          $node->field_object_production_date['und'][0]['value'] = $fields['f_date']['new'] = decode_entities(stripslashes($record['data']['dcterms:temporal']));
+        }
+
+        if( $node->field_object_publisher_id['und'][0]['value'] != $record['data']['dc:publisher'] ) {
+          $fields['f_pub']['old'] = $node->field_object_publisher_id['und'][0]['value'];
+          $node->field_object_publisher_id['und'][0]['value'] = $fields['f_pub']['new'] = decode_entities(stripslashes($record['data']['dc:publisher']));
+        }
+
+        if( $node->field_object_materials['und'][0]['value'] != $record['data']['pndsterms:extension']['e20cl:materials'] ) {
+          $fields['f_mat']['old'] = $node->field_object_materials['und'][0]['value'];
+          $node->field_object_materials['und'][0]['value'] = $fields['f_mat']['new'] = decode_entities(stripslashes($record['data']['pndsterms:extension']['e20cl:materials']));
+        }
+
+        if( $node->field_object_size['und'][0]['value'] != $record['data']['pndsterms:extension']['e20cl:size'] ) {
+          $fields['f_size']['old'] = $node->field_object_size['und'][0]['value'];
+          $node->field_object_size['und'][0]['value'] = $fields['f_size']['new'] = decode_entities(stripslashes($record['data']['pndsterms:extension']['e20cl:size']));
+        }
+
+        if( $node->field_object_link['und'][0]['value'] != $record['data']['link'] ) {
+          $fields['f_link']['old'] = $node->field_object_link['und'][0]['value'];
+          $node->field_object_link['und'][0]['value'] = $fields['f_link']['new'] = $record['data']['link'];
+        }
+
+        if( $node->field_object_thumbnail_url['und'][0]['value'] != $record['data']['pndsterms:thumbnail'] ) {
+          $fields['f_thumb']['old'] = $node->field_object_thumbnail_url['und'][0]['value'];
+          $node->field_object_thumbnail_url['und'][0]['value'] = $fields['f_link']['new'] = $record['data']['pndsterms:thumbnail'];
+        }
+
+      }
+
+
+
+      $sql = '';
+
+        $node->title = utf8_encode($node->title);
+        $pub = utf8_encode(mysql_escape_string( str_replace('PN:e20cl:','',$record['set']) ));
+        if( empty($node->nid) ) $node->nid = 0;
+
+        $names = array('f_title','f_desc','f_copy','f_maker','f_id','f_date','f_pub','f_mat','f_size','f_link', 'f_thumb');
+
+        $something_changed = false;
+        //$something_changed = true;
+        foreach($names as $name) {
+          if( empty($fields[$name]['old']) ) {
+            $fields[$name]['old'] = '';
+          }
+          if( empty($fields[$name]['new']) ) {
+            $fields[$name]['new'] = '';
+          }
+
+          if( !empty($fields[$name]['old']) || !empty($fields[$name]['new']) ) {
+            $something_changed = true;
+          }
+        }
+
+        if( $something_changed || !$node->nid) {
+          if( $insert ) {
+            $status = 'added';
+          } else {
+            $status = 'updated';
+          }
+        } else {
+          $status = 'equal';
+        }
+        $d = date('Y-m-d');
+
+        $vars = array('nid' => $node->nid,
+                               'publisher' => $pub,
+                               'title' => $node->title,
+                               'old_title' => $fields['f_title']['old'],
+                               'new_title' => $fields['f_title']['new'],
+                               'old_desc' => $fields['f_desc']['old'],
+                               'new_desc' => $fields['f_desc']['new'],
+                               'old_copy' => $fields['f_copy']['old'],
+                               'new_copy' => $fields['f_copy']['new'],
+                               'old_maker' => $fields['f_maker']['old'],
+                               'new_maker' => $fields['f_maker']['new'],
+                               'old_id' => $fields['f_id']['old'],
+                               'new_id' => $fields['f_id']['new'],
+                               'old_date' => $fields['f_date']['old'],
+                               'new_date' => $fields['f_date']['new'],
+                               'old_pub' => $fields['f_pub']['old'],
+                               'new_pub' => $fields['f_pub']['new'],
+                               'old_mat' => $fields['f_mat']['old'],
+                               'new_mat' => $fields['f_mat']['new'],
+                               'old_size' => $fields['f_size']['old'],
+                               'new_size' => $fields['f_size']['new'],
+                               'old_size' => $fields['f_link']['old'],
+                               'new_size' => $fields['f_link']['new'],
+                               'old_size' => $fields['f_thumb']['old'],
+                               'new_size' => $fields['f_thumb']['new'],
+                               'timestamp' => time(),
+                               'status' => $status,
+                               'date' => $d);
+
+        //if we have changed something log and save node
+        if( $something_changed || !$node->nid) {
+
+          db_insert('mgl_oai_report')->fields($vars)->execute();
+
+          if( empty($insert) && empty($update) ) {
+            print 'we have a problem!!';
+            die;
+          }
+
+          $debug_this_nid = -1;
+          if( $node->nid == $debug_this_nid ) {
+            p($record);
+            p($fields);
+            p($node);
+            die;
+          }
+
+          //unset($node->nid);
+          node_save($node);
+
+        }
+
+      switch($status) {
+        case 'updated':
+          print '-U-'.$node->nid.'  ';
+          $updated++;
+          break;
+        case 'added':
+          print '-A-'.$node->nid.'  ';
+          $added++;
+          break;
+        case 'equal':
+          print '-E-';
+          $equal++;
+          break;
+        }
+
+      $sql = '';
+      $node = null;
+
+      $c++;
+
+      if( $limit == $c ) {
+        print "\n\n limit of $limit has been hit!!\n";
+
+        break;
+      }
+
+  }
+
+  $cg_report_emails = variable_get('cg_report_emails', array());
+  $cg_report_emails = explode(',', $cg_report_emails);
+  print "\n finished!!";
+  $body = "Harvester has run";
+  $body .= "\nTotal records retrieved from culture grid : ".$c;
+  $body .= "\nTotal records updated : ".$updated;
+  $body .= "\nTotal records added : ".$added;
+  $body .= "\nTotal records equal (not updated): ".$equal;
+
+  foreach($cg_report_emails as $email) {
+    harvester_sendmail($email,'Harvester Ran Successfully',$body);
+  }
+
+  return true;
+
+}
+
+function harvester_sendmail($to,$subject,$body,$from_name) {
+  mail(trim($to), $subject, $body);
+}
+
+function debug_totals($records) {
+
+  $totals = array();
+  $c = 0;
+  foreach($records as $record) {
+    @$totals[$record['set']][$record['type']]++;
+    $c++;
+  }
+  print '<h1>Total records from CG: '.$c.'</h1>';
+  p($totals);
+
+}
+
+function format_records($set,$records) {
+
+  $types = array();
+  $output = array();
+
+  foreach($records as $record) {
+
+    //get the meta data
+    if( isset($record['metadata']['pndsdc:description']) ) {
+      $record = $record['metadata']['pndsdc:description'];
+    } else if( isset($record['metadata']['description']) ) {
+      $record = $record['metadata']['description'];
+    } else {
+      //ignore deleted records
+      if( $record['header_attr']['status'] == 'deleted') {
+        continue;
+      } else {
+        //something is wrong with the data!!!
+        drupal_set_message('Error: Invalid record');
+      }
+    }
+
+    $record['dc:type'] = strtolower($record['dc:type']);
+
+    $output[] = array('type' => $record['dc:type'],
+                      'set' => $set,
+                      'data' => (array)$record);
+
+  }
+
+  return $output;
+}
+
+function xml2array($contents, $get_attributes=1, $priority = 'tag') {
+    if(!$contents) return array();
+
+    if(!function_exists('xml_parser_create')) {
+        //print "'xml_parser_create()' function not found!";
+        return array();
+    }
+
+    //Get the XML parser of PHP - PHP must have this module for the parser to work
+    $parser = xml_parser_create('');
+    xml_parser_set_option($parser, XML_OPTION_TARGET_ENCODING, "UTF-8"); # http://minutillo.com/steve/weblog/2004/6/17/php-xml-and-character-encodings-a-tale-of-sadness-rage-and-data-loss
+    xml_parser_set_option($parser, XML_OPTION_CASE_FOLDING, 0);
+    xml_parser_set_option($parser, XML_OPTION_SKIP_WHITE, 1);
+    xml_parse_into_struct($parser, trim($contents), $xml_values);
+    xml_parser_free($parser);
+
+    if(!$xml_values) return;//Hmm...
+
+    //Initializations
+    $xml_array = array();
+    $parents = array();
+    $opened_tags = array();
+    $arr = array();
+
+    $current = &$xml_array; //Refference
+
+    //Go through the tags.
+    $repeated_tag_index = array();//Multiple tags with same name will be turned into an array
+    foreach($xml_values as $data) {
+        unset($attributes,$value);//Remove existing values, or there will be trouble
+
+        //This command will extract these variables into the foreach scope
+        // tag(string), type(string), level(int), attributes(array).
+        extract($data);//We could use the array by itself, but this cooler.
+
+        $result = array();
+        $attributes_data = array();
+
+        if(isset($value)) {
+            if($priority == 'tag') $result = $value;
+            else $result['value'] = $value; //Put the value in a assoc array if we are in the 'Attribute' mode
+        }
+
+        //Set the attributes too.
+        if(isset($attributes) and $get_attributes) {
+            foreach($attributes as $attr => $val) {
+                if($priority == 'tag') $attributes_data[$attr] = $val;
+                else $result['attr'][$attr] = $val; //Set all the attributes in a array called 'attr'
+            }
+        }
+
+        //See tag status and do the needed.
+        if($type == "open") {//The starting of the tag '<tag>'
+            $parent[$level-1] = &$current;
+            if(!is_array($current) or (!in_array($tag, array_keys($current)))) { //Insert New tag
+                $current[$tag] = $result;
+                if($attributes_data) $current[$tag. '_attr'] = $attributes_data;
+                $repeated_tag_index[$tag.'_'.$level] = 1;
+
+                $current = &$current[$tag];
+
+            } else { //There was another element with the same tag name
+
+                if(isset($current[$tag][0])) {//If there is a 0th element it is already an array
+                    $current[$tag][$repeated_tag_index[$tag.'_'.$level]] = $result;
+                    $repeated_tag_index[$tag.'_'.$level]++;
+                } else {//This section will make the value an array if multiple tags with the same name appear together
+                    $current[$tag] = array($current[$tag],$result);//This will combine the existing item and the new item together to make an array
+                    $repeated_tag_index[$tag.'_'.$level] = 2;
+
+                    if(isset($current[$tag.'_attr'])) { //The attribute of the last(0th) tag must be moved as well
+                        $current[$tag]['0_attr'] = $current[$tag.'_attr'];
+                        unset($current[$tag.'_attr']);
+                    }
+
+                }
+                $last_item_index = $repeated_tag_index[$tag.'_'.$level]-1;
+                $current = &$current[$tag][$last_item_index];
+            }
+
+        } elseif($type == "complete") { //Tags that ends in 1 line '<tag />'
+            //See if the key is already taken.
+            if(!isset($current[$tag])) { //New Key
+                $current[$tag] = $result;
+                $repeated_tag_index[$tag.'_'.$level] = 1;
+                if($priority == 'tag' and $attributes_data) $current[$tag. '_attr'] = $attributes_data;
+
+            } else { //If taken, put all things inside a list(array)
+                if(isset($current[$tag][0]) and is_array($current[$tag])) {//If it is already an array...
+
+                    // ...push the new element into that array.
+                    $current[$tag][$repeated_tag_index[$tag.'_'.$level]] = $result;
+
+                    if($priority == 'tag' and $get_attributes and $attributes_data) {
+                        $current[$tag][$repeated_tag_index[$tag.'_'.$level] . '_attr'] = $attributes_data;
+                    }
+                    $repeated_tag_index[$tag.'_'.$level]++;
+
+                } else { //If it is not an array...
+                    $current[$tag] = array($current[$tag],$result); //...Make it an array using using the existing value and the new value
+                    $repeated_tag_index[$tag.'_'.$level] = 1;
+                    if($priority == 'tag' and $get_attributes) {
+                        if(isset($current[$tag.'_attr'])) { //The attribute of the last(0th) tag must be moved as well
+
+                            $current[$tag]['0_attr'] = $current[$tag.'_attr'];
+                            unset($current[$tag.'_attr']);
+                        }
+
+                        if($attributes_data) {
+                            $current[$tag][$repeated_tag_index[$tag.'_'.$level] . '_attr'] = $attributes_data;
+                        }
+                    }
+                    $repeated_tag_index[$tag.'_'.$level]++; //0 and 1 index is already taken
+                }
+            }
+
+        } elseif($type == 'close') { //End of tag '</tag>'
+            $current = &$parent[$level-1];
+        }
+    }
+
+    return($xml_array);
+}
+
+function p($msg,$b = false) {
+  if($b) {
+    ob_start();
+  }
+  print '<pre>';
+  var_dump($msg);
+  print '</pre>';
+  if($b) {
+    return ob_get_clean();
+  }
+}

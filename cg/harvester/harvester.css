@@ -1,0 +1,30 @@
+.h-rep {  
+  width: 1000px !important;
+  table-layout: fixed;
+}
+
+.h-rep td {  
+  border: 1px solid #BEBFB9;
+  padding: 2px !important;  
+  overflow: hidden;
+}
+
+#h-rep-sh {
+  table-layout: fixed;
+}
+
+#h-rep-sh th, .h-rep th {
+  text-transform: none !important;
+  font-size: 10px;
+  width: 48px !important;
+  padding: 2px !important;
+  overflow:hidden;
+}
+
+.h-rep a {
+  cursor: pointer;
+}
+
+.high {
+  background-color: #fff0c6;
+}

@@ -1,0 +1,6 @@
+; $Id:$
+name = Harvester
+description = Harvest data from culture grid and import into nodes
+version = 7.x-0.1
+core = 7.x
+package = "miggle"
