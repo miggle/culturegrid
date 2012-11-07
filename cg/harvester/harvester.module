@@ -1,4 +1,27 @@
 <?php
+/*
+
+Culture Grid integration via OAI-PMH: Version 0.1
+
+This file is part of the above module which has been built for use with Drupal 7 and Collections Trust Culture Grid
+
+This module is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+
+This module is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this module in a file called COPYING.txt.  If not, see <http://www.gnu.org/licenses/>.
+
+Copyright (C) 2012 Alick Mighall, Louis Sawtell, Hon Mond Ng, Tim Rabetts, Museum of London
+
+*/
 
 function harvester_perm() {
     return array('access harvester');
